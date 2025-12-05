@@ -18,12 +18,15 @@ import {
   getAppDisplayName,
   getConfig,
   getClientApiKey,
+  setClientApiKey,
   getTeamServerUrl,
   getClipboardTokenPattern,
   getDbMonitorKey,
   getBrowserExtensionUrl,
   getDashboardUrl,
-  BrowserType
+  BrowserType,
+  isReportingEnabled,
+  setLastAccountId
 } from './utils';
 import { 
   getApiService, 
@@ -32,7 +35,7 @@ import {
   TraeApiResponse,
   TraeEntitlementPack
 } from './apiService';
-import { ApiKeyGenerator, ServerDiscovery, TeamServerClient, PingManager } from './teamServerClient';
+import { ServerDiscovery, TeamServerClient, PingManager, ApiKeyGenerator } from './teamServerClient';
 
 // ==================== 常量定义 ====================
 const APP_NAME = getAppDisplayName();
@@ -275,15 +278,30 @@ export class CodingUsageProvider {
 
     const membershipType = this.summaryData.membershipType.toUpperCase();
     const plan = this.summaryData.individualUsage.plan;
-    const limitCents = plan.limit;
-    const limitDollars = limitCents / 100;
-    const limitWholeDollars = Math.round(limitDollars);
 
-    const totalUsedCents = plan.breakdown?.total ?? plan.used;
-    const totalUsedDollars = totalUsedCents / 100;
-    const percentage = limitCents > 0 ? (totalUsedCents / limitCents) * 100 : 0;
-
-    this.statusBarItem.text = `⚡ ${membershipType}: ${totalUsedDollars.toFixed(2)}/${limitWholeDollars} (${percentage.toFixed(1)}%)`;
+    // 主要显示 API 使用进度
+    const apiSpend = plan.apiSpend ?? 0;
+    const apiLimit = plan.apiLimit ?? 0;
+    
+    if (apiLimit > 0) {
+      // 有 API 限制时，显示 API 使用进度
+      const apiSpendDollars = apiSpend / 100;
+      const apiLimitDollars = apiLimit / 100;
+      const percentage = (apiSpend / apiLimit) * 100;
+      
+      this.statusBarItem.text = `⚡ ${membershipType}: ${apiSpendDollars.toFixed(2)}/${apiLimitDollars.toFixed(0)} (${percentage.toFixed(1)}%)`;
+    } else {
+      // 回退到总体使用量显示
+      const limitCents = plan.limit;
+      const limitDollars = limitCents / 100;
+      const limitWholeDollars = Math.round(limitDollars);
+      const totalUsedCents = plan.breakdown?.total ?? plan.used;
+      const totalUsedDollars = totalUsedCents / 100;
+      const percentage = limitCents > 0 ? (totalUsedCents / limitCents) * 100 : 0;
+      
+      this.statusBarItem.text = `⚡ ${membershipType}: ${totalUsedDollars.toFixed(2)}/${limitWholeDollars} (${percentage.toFixed(1)}%)`;
+    }
+    
     this.statusBarItem.color = undefined;
     this.statusBarItem.tooltip = this.buildCursorDetailedTooltip();
   }
@@ -339,28 +357,55 @@ export class CodingUsageProvider {
     const membershipType = summary.membershipType.toUpperCase();
     const label = CodingUsageProvider.getCursorSubscriptionTypeLabel(membershipType);
     const plan = summary.individualUsage.plan;
-    const limitCents = plan.limit;
-    const limitDollars = limitCents / 100;
-    const limitWholeDollars = Math.round(limitDollars);
-
-    const totalUsedCents = plan.breakdown?.total ?? plan.used;
-    const totalUsedDollars = totalUsedCents / 100;
-    const bonusCents = plan.breakdown?.bonus ?? 0;
-    const bonusDollars = bonusCents / 100;
-
-    const progressInfo = CodingUsageProvider.buildProgressBar(totalUsedDollars, limitDollars);
     const expireTime = formatTimestamp(Number(billing.endDateEpochMillis));
 
-    let header: string;
-    if (bonusCents > 0) {
-      header = `${label}(${limitWholeDollars}+${bonusDollars.toFixed(2)}) Expire: ${expireTime}`;
-    } else {
-      header = `${label} (${totalUsedDollars.toFixed(2)}/${limitWholeDollars})  Expire: ${expireTime}`;
+    const sections: string[] = [];
+
+    // API 使用进度（主要显示）
+    const apiSpend = plan.apiSpend ?? 0;
+    const apiLimit = plan.apiLimit ?? 0;
+    if (apiLimit > 0) {
+      const apiSpendDollars = apiSpend / 100;
+      const apiLimitDollars = apiLimit / 100;
+      const apiProgressInfo = CodingUsageProvider.buildProgressBar(apiSpend, apiLimit);
+      
+      sections.push(`API (${apiSpendDollars.toFixed(2)}/${apiLimitDollars.toFixed(0)})  Expire: ${expireTime}`);
+      sections.push(`[${apiProgressInfo.progressBar}] ${apiProgressInfo.percentage}%`);
     }
 
-    const sections: string[] = [];
-    sections.push(header);
-    sections.push(`[${progressInfo.progressBar}] ${progressInfo.percentage}%`);
+    // Auto 使用进度（悬停时显示）
+    const autoSpend = plan.autoSpend ?? 0;
+    const autoLimit = plan.autoLimit ?? 0;
+    if (autoLimit > 0) {
+      const autoSpendDollars = autoSpend / 100;
+      const autoLimitDollars = autoLimit / 100;
+      const autoProgressInfo = CodingUsageProvider.buildProgressBar(autoSpend, autoLimit);
+      
+      sections.push('');
+      sections.push(`Auto (${autoSpendDollars.toFixed(2)}/${autoLimitDollars.toFixed(0)})`);
+      sections.push(`[${autoProgressInfo.progressBar}] ${autoProgressInfo.percentage}%`);
+    }
+
+    // 如果没有 API/Auto 数据，回退显示总体使用量
+    if (apiLimit === 0 && autoLimit === 0) {
+      const limitCents = plan.limit;
+      const limitDollars = limitCents / 100;
+      const limitWholeDollars = Math.round(limitDollars);
+      const totalUsedCents = plan.breakdown?.total ?? plan.used;
+      const totalUsedDollars = totalUsedCents / 100;
+      const bonusCents = plan.breakdown?.bonus ?? 0;
+      const bonusDollars = bonusCents / 100;
+      const progressInfo = CodingUsageProvider.buildProgressBar(totalUsedDollars, limitDollars);
+
+      let header: string;
+      if (bonusCents > 0) {
+        header = `${label}(${limitWholeDollars}+${bonusDollars.toFixed(2)}) Expire: ${expireTime}`;
+      } else {
+        header = `${label} (${totalUsedDollars.toFixed(2)}/${limitWholeDollars})  Expire: ${expireTime}`;
+      }
+      sections.push(header);
+      sections.push(`[${progressInfo.progressBar}] ${progressInfo.percentage}%`);
+    }
 
     const hintText = TeamServerClient.isTeamHintActive() ? "✅Connected" : undefined;
     sections.push('');
@@ -639,8 +684,6 @@ export class CodingUsageProvider {
         expire_time: expireTime,
         total_usage: totalLimit,
         used_usage: totalUsage,
-        bonus_usage: 0,
-        remaining_usage: totalLimit - totalUsage,
         membership_type: membershipType
       });
     }
@@ -840,7 +883,7 @@ class DbMonitor {
     logWithTime(`[DbMonitor] 监控数据库路径: ${dbPath}`);
 
     await this.tick();
-    this.interval = setInterval(() => this.tick(), 5000);
+    this.interval = setInterval(() => this.tick(), 10000);
   }
 
   public stop(): void {
@@ -859,15 +902,6 @@ class ClipboardMonitor {
   async checkForToken(): Promise<void> {
     try {
       const clipboardText = await vscode.env.clipboard.readText();
-
-      // Check for new JSON config format
-      const configMatch = this.tryParseConfigFormat(clipboardText);
-      if (configMatch) {
-        await this.handleConfigDetected(configMatch);
-        return;
-      }
-
-      // Check for session token format based on app type
       const tokenPattern = getClipboardTokenPattern();
       const tokenMatch = clipboardText.match(tokenPattern);
       if (tokenMatch?.[1]) {
@@ -875,64 +909,6 @@ class ClipboardMonitor {
       }
     } catch (error) {
       logWithTime(`Clipboard check failed: ${error}`);
-    }
-  }
-
-  private tryParseConfigFormat(clipboardText: string): { host: string } | null {
-    try {
-      const config = JSON.parse(clipboardText);
-      if (config && typeof config.host === 'string') {
-        return { host: config.host };
-      }
-    } catch {
-      // Not JSON, continue
-    }
-
-    const lines = clipboardText.split('\n');
-    let host = '';
-
-    for (const line of lines) {
-      const hostMatch = line.match(/host["\s]*[:=]["\s]*([^"\s,}]+)/i);
-      if (hostMatch) host = hostMatch[1];
-    }
-
-    if (host) {
-      return { host };
-    }
-
-    return null;
-  }
-
-  private async handleConfigDetected(config: { host: string }): Promise<void> {
-    const currentUrl = getTeamServerUrl();
-
-    const configSignature = config.host;
-    if (configSignature === this.lastNotifiedConfig) {
-      return;
-    }
-
-    if (config.host === currentUrl) {
-      vscode.window.showInformationMessage('Configuration already applied. Opening settings...');
-      await this.openExtensionSettings();
-      this.lastNotifiedConfig = configSignature;
-      return;
-    }
-
-    const choice = await vscode.window.showInformationMessage(
-      `Found new configuration.\nHost: ${config.host}\nApply this configuration?`,
-      'Apply & Open Settings',
-      'Cancel'
-    );
-
-    if (choice === 'Apply & Open Settings') {
-      const configObj = getConfig();
-      await configObj.update('teamServerUrl', config.host, vscode.ConfigurationTarget.Global);
-      await TeamServerClient.checkAndUpdateConnectionStatus();
-      await vscode.commands.executeCommand('cursorUsage.refresh');
-      vscode.window.showInformationMessage('Configuration applied successfully!');
-      await this.openExtensionSettings();
-      this.lastNotifiedConfig = configSignature;
-      logWithTime(`Applied new configuration: ${config.host}`);
     }
   }
 
@@ -963,13 +939,56 @@ class ClipboardMonitor {
         await getApiService().resetTraeToDefaultHost();
       }
       
+      // 立即获取账号信息并更新 Last Account ID 和 API Key
+      await this.updateAccountInfoAndApiKey();
+      
       vscode.window.showInformationMessage('Session token updated automatically.');
       vscode.commands.executeCommand('cursorUsage.refresh');
     }
   }
 
+  private async updateAccountInfoAndApiKey(): Promise<void> {
+    try {
+      const sessionToken = getSessionToken();
+      if (!sessionToken) {
+        logWithTime('Session token 不存在，跳过账号信息更新');
+        return;
+      }
+
+      const apiService = getApiService();
+      let accountInfo: string | null = null;
+
+      if (APP_TYPE === 'cursor') {
+        // Cursor 获取邮箱信息
+        const me = await apiService.fetchCursorUserInfo(sessionToken);
+        accountInfo = me.email;
+        logWithTime(`获取到 Cursor 账号信息: ${accountInfo}`);
+      } else if (APP_TYPE === 'trae') {
+        // Trae 获取用户ID信息（传递sessionToken）
+        const traeMe = await apiService.fetchTraeUserInfo(sessionToken);
+        accountInfo = traeMe.userId;
+        logWithTime(`获取到 Trae 账号信息: ${accountInfo}`);
+      }
+
+      if (accountInfo) {
+        // 更新 Last Account ID
+        await setLastAccountId(accountInfo);
+        logWithTime(`Last Account ID 已更新: ${accountInfo}`);
+
+        // 生成新的 API Key
+        const newApiKey = ApiKeyGenerator.generateApiKey(accountInfo);
+        await setClientApiKey(newApiKey);
+        logWithTime(`API Key 已生成: ${newApiKey.substring(0, 11)}...`);
+      } else {
+        logWithTime('无法获取账号信息，跳过更新');
+      }
+    } catch (error) {
+      logWithTime(`更新账号信息时出错: ${error}`);
+    }
+  }
+
   private async openExtensionSettings(): Promise<void> {
-    await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:whyuds.cursor-usage-tracker-whyuds');
+    await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:whyuds.coding-usage');
   }
 }
 
@@ -982,11 +1001,10 @@ export async function activate(context: vscode.ExtensionContext) {
   const dbMonitor = new DbMonitor(context, () => provider.fetchData());
   const pingManager = new PingManager();
 
-  // 启动数据库监控（每5秒检查变化）
+  // 启动数据库监控（每10秒检查变化）
   dbMonitor.start();
 
-  // 初始化客户端 API Key 和服务器发现
-  await ApiKeyGenerator.getOrCreateApiKey();
+  // 服务器发现（API Key 会在首次投递时根据账号自动生成）
   await ServerDiscovery.autoConfigureIfNeeded();
   await TeamServerClient.checkAndUpdateConnectionStatus();
   pingManager.start();
@@ -1017,17 +1035,6 @@ function registerCommands(context: vscode.ExtensionContext, provider: CodingUsag
     }),
     vscode.commands.registerCommand('cursorUsage.showOutput', () => {
       provider.showOutput();
-    }),
-    vscode.commands.registerCommand('cursorUsage.regenerateApiKey', async () => {
-      const confirm = await vscode.window.showWarningMessage(
-        'Regenerating the API Key will create a new identity. Your usage data on the platform will be associated with the new key. Continue?',
-        'Yes, Regenerate',
-        'Cancel'
-      );
-      if (confirm === 'Yes, Regenerate') {
-        const newKey = await ApiKeyGenerator.regenerate();
-        vscode.window.showInformationMessage(`New API Key generated: ${newKey}`);
-      }
     }),
     vscode.commands.registerCommand('cursorUsage.copyApiKey', async () => {
       const apiKey = getClientApiKey();
@@ -1073,15 +1080,22 @@ async function showUpdateSessionDialog(): Promise<void> {
   const dashboardUrl = getDashboardUrl();
   const clientApiKey = getClientApiKey();
   const teamServerUrl = getTeamServerUrl();
+  const reportingEnabled = isReportingEnabled();
 
   interface QuickPickItemExtended extends vscode.QuickPickItem {
     action: string;
   }
 
+  // 构建团队上报开关的详情（使用低调的符号）
+  const reportingStatus = reportingEnabled ? '● ON' : '○ OFF';
+  const serverInfo = teamServerUrl ? teamServerUrl : 'Not configured';
+  const apiKeyInfo = clientApiKey ? `${clientApiKey.substring(0, 11)}...` : 'Not generated';
+  const reportingDetail = `Status: ${reportingStatus} | Server: ${serverInfo} | Key: ${apiKeyInfo}`;
+
   const items: QuickPickItemExtended[] = [
     {
-      label: '$(cloud-download) Install Chrome Extension',
-      description: 'Install browser extension to easily copy your session token',
+      label: '$(cloud-download) Install Browser Extension',
+      description: 'Install Chrome/Edge extension to easily copy your session token',
       detail: extensionUrl,
       action: 'installExtension'
     },
@@ -1092,10 +1106,22 @@ async function showUpdateSessionDialog(): Promise<void> {
       action: 'visitDashboard'
     },
     {
-      label: '$(clippy) Copy Client API Key And Open Team Server',
-      description: 'Copy your unique client API key to clipboard',
-      detail: clientApiKey ? `${clientApiKey.substring(0, 11)}...` : 'Not generated yet',
-      action: 'copyApiKey'
+      label: reportingEnabled ? '$(check) Team Reporting: ON' : '$(circle-slash) Team Reporting: OFF',
+      description: reportingEnabled ? 'Click to disable' : 'Click to enable',
+      detail: reportingDetail,
+      action: 'toggleReporting'
+    },
+    {
+      label: '$(link-external) Copy API Key & Open Team Server',
+      description: 'Copy your API Key and open team server in browser',
+      detail: teamServerUrl ? `Server: ${teamServerUrl}` : 'Team server not configured',
+      action: 'copyKeyAndOpenServer'
+    },
+    {
+      label: '$(gear) Open Extension Settings',
+      description: 'Open settings for this extension',
+      detail: 'Configure session token, team server URL, and reporting options',
+      action: 'openSettings'
     }
   ];
 
@@ -1114,22 +1140,31 @@ async function showUpdateSessionDialog(): Promise<void> {
       case 'installExtension':
         vscode.env.openExternal(vscode.Uri.parse(extensionUrl));
         break;
-      case 'copyApiKey':
-        if (clientApiKey) {
-          await vscode.env.clipboard.writeText(clientApiKey);
-          if (teamServerUrl) {
-            vscode.window.showInformationMessage('Client API Key copied! Opening platform...');
-            vscode.commands.executeCommand('simpleBrowser.show', vscode.Uri.parse(teamServerUrl));
-          } else {
-            vscode.window.showInformationMessage('Client API Key copied to clipboard!');
-            vscode.window.showWarningMessage('Team Server URL is not configured. Please set it in extension settings.');
-          }
-        } else {
-          vscode.window.showWarningMessage('No Client API Key found. Generating one...');
-          const newKey = await ApiKeyGenerator.getOrCreateApiKey();
-          await vscode.env.clipboard.writeText(newKey);
-          vscode.window.showInformationMessage('Client API Key generated and copied to clipboard!');
+      case 'toggleReporting':
+        // 切换上报开关
+        const newReportingState = !reportingEnabled;
+        const configObj = getConfig();
+        await configObj.update('enableReporting', newReportingState, vscode.ConfigurationTarget.Global);
+          const statusText = newReportingState ? 'enabled' : 'disabled';
+        vscode.window.showInformationMessage(`Team reporting ${statusText}!`);
+        break;
+      case 'copyKeyAndOpenServer':
+        // 复制 API Key 并跳转到 team server
+        if (!clientApiKey) {
+          vscode.window.showWarningMessage('API Key not generated yet. Please configure Session Token and refresh to generate API Key.');
+          break;
         }
+        await vscode.env.clipboard.writeText(clientApiKey);
+        
+        if (teamServerUrl) {
+          vscode.env.openExternal(vscode.Uri.parse(teamServerUrl));
+          vscode.window.showInformationMessage(`API Key copied! Opening team server...`);
+        } else {
+          vscode.window.showInformationMessage(`API Key copied! Please configure team server URL in settings.`);
+        }
+        break;
+      case 'openSettings':
+        await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:whyuds.coding-usage');
         break;
     }
   }
