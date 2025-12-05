@@ -155,9 +155,9 @@ export type BrowserType = 'chrome' | 'edge' | 'unknown';
 export function getBrowserExtensionUrl(browserType: BrowserType): string {
   // 统一使用 Cursor 的浏览器扩展
   if (browserType === 'edge') {
-    return 'https://microsoftedge.microsoft.com/addons/detail/hgabfbdfbpplaoakjkclmijoegfgcdli';
+    return 'https://microsoftedge.microsoft.com/addons/detail/trae-usage-token-extracto/leopdblngeedggognlgokdlfpiojalji';
   }
-  return 'https://chromewebstore.google.com/detail/cursor-session-token-extr/pchppfhkjloedakahedjknknjppjpple';
+  return 'https://chromewebstore.google.com/detail/trae-usage-token-extracto/edkpaodbjadikhahggapfilgmfijjhei';
 }
 
 // ==================== Dashboard URL ====================
