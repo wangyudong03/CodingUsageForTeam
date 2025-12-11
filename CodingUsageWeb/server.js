@@ -52,6 +52,7 @@ app.use(session({
 }));
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
+// 静态资源路由：代理模式下主服务器会去掉 BASE_PATH 前缀，所以这里不需要加
 app.use('/static', express.static(path.join(__dirname, 'public')));
 app.use('/static/logo', express.static(path.join(__dirname, 'logo')));
 
@@ -182,12 +183,12 @@ async function getOrCreateApiKeyRecord(apiKey, email, platform, appName) {
   return record;
 }
 
-// 根据 app_name 获取 logo 路径
+// 根据 app_name 获取 logo 路径（返回相对路径，由调用处拼接 basePath）
 function getAppLogo(appName) {
   if (!appName) return null;
   const name = appName.toLowerCase();
-  if (name.includes('cursor')) return '/static/logo/cursor.png';
-  if (name.includes('trae')) return '/static/logo/trae.png';
+  if (name.includes('cursor')) return `${BASE_PATH}/static/logo/cursor.png`;
+  if (name.includes('trae')) return `${BASE_PATH}/static/logo/trae.png`;
   return null;
 }
 
@@ -367,7 +368,7 @@ app.get('/plaza', async (req, res) => {
     // 获取 email，优先从 API Key 记录获取，其次从使用报告获取
     const email = k.email || (r ? r.email : '') || '';
 
-      if (!email) {
+    if (!email) {
       // 没有 email 的记录单独显示（使用 api_key 作为分组键）
       const groupKey = `__apikey__${k.api_key}`;
       const groupData = {
@@ -420,7 +421,7 @@ app.get('/plaza', async (req, res) => {
         group.membership_type = r.membership_type || group.membership_type;
         group.expire_time = r.expire_time || group.expire_time;
         group.last_activity = r.created_at;
-        
+
         // 根据不同应用添加对应字段
         if (isTraeApp) {
           group.total_usage = r.total_usage || 0;
@@ -695,12 +696,12 @@ app.get('/api/trend/:apiKey', async (req, res) => {
     } else {
       d = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate() + i);
     }
-    
+
     const key = formatKey(d);
     if (byPeriod.has(key)) {
       lastKnown = byPeriod.get(key);
     }
-    
+
     trend.push({
       label: formatLabel(d),
       value: lastKnown,
