@@ -366,7 +366,7 @@ export class CodingUsageProvider {
   }
 
   // ==================== Cursor Tooltip 构建 ====================
-  private buildCursorDetailedTooltip(): string {
+  private buildCursorDetailedTooltip(): vscode.MarkdownString {
     return CodingUsageProvider.buildCursorTooltipFromData(
       this.summaryData,
       this.billingCycleData,
@@ -380,9 +380,9 @@ export class CodingUsageProvider {
     billing: BillingCycleResponse | null,
     aggregatedData: AggregatedUsageResponse | null,
     currentTime?: Date
-  ): string {
+  ): vscode.MarkdownString {
     if (!summary || !billing) {
-      return 'Click to configure session token\n\nSingle click: Refresh\nDouble click: Configure';
+      return new vscode.MarkdownString('Click to configure session token\n\nSingle click: Refresh\nDouble click: Configure');
     }
 
     const membershipType = summary.membershipType.toUpperCase();
@@ -390,7 +390,8 @@ export class CodingUsageProvider {
     const plan = summary.individualUsage.plan;
     const expireTime = formatTimestamp(Number(billing.endDateEpochMillis));
 
-    const sections: string[] = [];
+    const md = new vscode.MarkdownString();
+    md.supportHtml = true;
 
     // 从聚合数据计算使用量
     const { apiUsageCents, autoUsageCents } = CodingUsageProvider.calculateUsageFromAggregatedStatic(aggregatedData);
@@ -410,10 +411,9 @@ export class CodingUsageProvider {
       const apiLimitDollars = apiLimitCents / 100;
       const apiProgressInfo = CodingUsageProvider.buildProgressBarFromPercent(apiPercentUsed);
 
-      sections.push(`${label}  Expire: ${expireTime}`);
-      sections.push('');
-      sections.push(`API ($${apiUsageDollars.toFixed(2)}/${apiLimitDollars.toFixed(0)})`);
-      sections.push(`[${apiProgressInfo.progressBar}] ${apiPercentUsed.toFixed(1)}%`);
+      md.appendMarkdown(`${label}  Expire: ${expireTime}\n\n`);
+      md.appendMarkdown(`API ($${apiUsageDollars.toFixed(2)}/${apiLimitDollars.toFixed(0)})\n`);
+      md.appendMarkdown(`[${apiProgressInfo.progressBar}] ${apiPercentUsed.toFixed(1)}%\n`);
     }
 
     // Auto 使用进度
@@ -422,9 +422,9 @@ export class CodingUsageProvider {
       const autoLimitDollars = autoLimitCents / 100;
       const autoProgressInfo = CodingUsageProvider.buildProgressBarFromPercent(autoPercentUsed);
 
-      sections.push('');
-      sections.push(`Auto ($${autoUsageDollars.toFixed(2)}/${autoLimitDollars.toFixed(0)})`);
-      sections.push(`[${autoProgressInfo.progressBar}] ${autoPercentUsed.toFixed(1)}%`);
+      md.appendMarkdown('\n');
+      md.appendMarkdown(`Auto ($${autoUsageDollars.toFixed(2)}/${autoLimitDollars.toFixed(0)})\n`);
+      md.appendMarkdown(`[${autoProgressInfo.progressBar}] ${autoPercentUsed.toFixed(1)}%\n`);
     }
 
     // 如果没有 API/Auto 数据，回退显示总体使用量
@@ -433,8 +433,8 @@ export class CodingUsageProvider {
       const limitDollars = plan.limit / 100;
       const progressInfo = CodingUsageProvider.buildProgressBar(usedDollars, limitDollars);
 
-      sections.push(`${label} ($${usedDollars.toFixed(2)}/${limitDollars.toFixed(0)})  Expire: ${expireTime}`);
-      sections.push(`[${progressInfo.progressBar}] ${totalPercentUsed.toFixed(1)}%`);
+      md.appendMarkdown(`${label} ($${usedDollars.toFixed(2)}/${limitDollars.toFixed(0)})  Expire: ${expireTime}\n`);
+      md.appendMarkdown(`[${progressInfo.progressBar}] ${totalPercentUsed.toFixed(1)}%\n`);
     }
 
     // OnDemand 使用进度（如果启用）
@@ -445,9 +445,9 @@ export class CodingUsageProvider {
       const onDemandPercent = onDemand.limit > 0 ? (onDemand.used / onDemand.limit) * 100 : 0;
       const onDemandProgressInfo = CodingUsageProvider.buildProgressBarFromPercent(onDemandPercent);
 
-      sections.push('');
-      sections.push(`OnDemand ($${onDemandUsedDollars.toFixed(2)}/${onDemandLimitDollars.toFixed(0)})`);
-      sections.push(`[${onDemandProgressInfo.progressBar}] ${onDemandPercent.toFixed(1)}%`);
+      md.appendMarkdown('\n');
+      md.appendMarkdown(`OnDemand ($${onDemandUsedDollars.toFixed(2)}/${onDemandLimitDollars.toFixed(0)})\n`);
+      md.appendMarkdown(`[${onDemandProgressInfo.progressBar}] ${onDemandPercent.toFixed(1)}%\n`);
     }
 
     // Token 使用统计（放在最后）
@@ -457,16 +457,57 @@ export class CodingUsageProvider {
       const totalCacheWrite = parseInt(aggregatedData.totalCacheWriteTokens || '0');
       const totalCacheRead = parseInt(aggregatedData.totalCacheReadTokens || '0');
 
-      sections.push('');
-      sections.push('In         Out        Write      Read');
-      sections.push(`${CodingUsageProvider.formatTokenCount(totalInput).padEnd(11)}${CodingUsageProvider.formatTokenCount(totalOutput).padEnd(11)}${CodingUsageProvider.formatTokenCount(totalCacheWrite).padEnd(11)}${CodingUsageProvider.formatTokenCount(totalCacheRead)}`);
+      const headers = ['In', 'Out', 'Write', 'Read'];
+      const values = [
+        CodingUsageProvider.formatTokenCount(totalInput),
+        CodingUsageProvider.formatTokenCount(totalOutput),
+        CodingUsageProvider.formatTokenCount(totalCacheWrite),
+        CodingUsageProvider.formatTokenCount(totalCacheRead)
+      ];
+
+      md.appendMarkdown('\n');
+      md.appendCodeblock(CodingUsageProvider.generateAsciiTable(headers, values), 'text');
     }
 
     const hintText = TeamServerClient.isTeamHintActive() ? "✅Connected" : undefined;
-    sections.push('');
-    sections.push(CodingUsageProvider.buildTimeSection(currentTime, hintText));
+    md.appendMarkdown('\n');
+    const timeSection = CodingUsageProvider.buildTimeSection(currentTime, hintText);
+    // Replace multiple spaces with unicode non-breaking spaces (\u00A0) to preserve alignment
+    md.appendMarkdown(timeSection.replace(/ {2,}/g, (match) => '\u00A0'.repeat(match.length)));
 
-    return sections.join('\n');
+    return md;
+  }
+
+  /**
+   * 生成 ASCII 表格
+   */
+  private static generateAsciiTable(headers: string[], values: string[]): string {
+    const colWidths = headers.map((header, i) => Math.max(header.length, values[i].length) + 2);
+
+    const buildRow = (items: string[]) => {
+      return '│' + items.map((item, i) => {
+        const padding = colWidths[i] - item.length;
+        const leftPad = Math.floor(padding / 2);
+        const rightPad = padding - leftPad;
+        return ' '.repeat(leftPad) + item + ' '.repeat(rightPad);
+      }).join('│') + '│';
+    };
+
+    const buildSeparator = (start: string, mid: string, end: string, line: string) => {
+      return start + colWidths.map(w => line.repeat(w)).join(mid) + end;
+    };
+
+    const top = buildSeparator('┌', '┬', '┐', '─');
+    const middle = buildSeparator('├', '┼', '┤', '─');
+    const bottom = buildSeparator('└', '┴', '┘', '─');
+
+    return [
+      top,
+      buildRow(headers),
+      middle,
+      buildRow(values),
+      bottom
+    ].join('\n');
   }
 
   /**
