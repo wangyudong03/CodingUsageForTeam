@@ -191,7 +191,7 @@ export class TeamServerClient {
         platform: os.platform(),
         app_name: vscode.env.appName
       };
-      logWithTime(`提交使用数据: ${JSON.stringify(body)}`);
+      // logWithTime(`提交使用数据: ${JSON.stringify(body)}`);
       await axios.post(`${url}/api/cursor-usage`, body, { headers: { 'X-Api-Key': apiKey }, timeout: API_TIMEOUT });
       logWithTime('提交使用数据成功');
     } catch (e) {

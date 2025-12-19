@@ -640,7 +640,6 @@ export class CodingUsageProvider {
   }
 
   async fetchData(retryCount = 0): Promise<void> {
-    logWithTime(`fetchData 开始 (重试次数: ${retryCount}, 手动刷新: ${this.isManualRefresh})`);
 
     // 清除之前的超时定时器
     this.clearFetchTimeout();
@@ -691,11 +690,10 @@ export class CodingUsageProvider {
   }
 
   private async fetchCursorData(sessionToken: string): Promise<void> {
-    logWithTime('开始获取 Cursor 数据');
     try {
       // 1. 获取使用摘要
       const summary = await this.apiService.fetchCursorUsageSummary(sessionToken);
-      logWithTime('成功获取 Cursor 使用量摘要');
+      logWithTime('获取 Cursor 使用量摘要成功');
 
       // 从 summary 中获取账单周期时间
       const startMillis = new Date(summary.billingCycleStart).getTime();
@@ -998,7 +996,7 @@ class DbMonitor {
 
   public async start(): Promise<void> {
     const dbPath = await this.getStateDbPathForCurrentWorkspace();
-    logWithTime(`[DbMonitor] 监控数据库路径: ${dbPath}`);
+    // logWithTime(`[DbMonitor] 监控数据库路径: ${dbPath}`);
 
     await this.tick();
     this.interval = setInterval(() => this.tick(), 10000);
