@@ -6,7 +6,7 @@ Current Cursor usage rules: Basic $20 API usage + Official Bonus usage (currentl
 **English Version | [中文版](README.md)**
 
 <div align="left">
-  <img src="https://raw.githubusercontent.com/lasoons/CodingUsage/refs/heads/main/CodingUsage/img/statebar.jpg" alt="Status Bar Configuration" width="400">
+  <img src="https://raw.githubusercontent.com/lasoons/CodingUsage/refs/heads/main/CodingUsage/img/statebar.png" alt="Status Bar Configuration" width="400">
 </div>
 
 Currently supports [Cursor](cursor:extension/whyuds.coding-usage), [Trae International](trae:extension/whyuds.coding-usage)

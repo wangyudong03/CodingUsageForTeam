@@ -6,7 +6,7 @@
 **[English Version](README.md) | 中文版**
 
 <div align="left">
-  <img src="https://raw.githubusercontent.com/lasoons/CodingUsage/refs/heads/main/CodingUsage/img/statebar.jpg" alt="状态栏配置" width="400">
+  <img src="https://raw.githubusercontent.com/lasoons/CodingUsage/refs/heads/main/CodingUsage/img/statebar.png" alt="状态栏配置" width="400">
 </div>
 
 当前支持[Cursor](cursor:extension/whyuds.coding-usage)、[Trae国际版](trae:extension/whyuds.coding-usage)
