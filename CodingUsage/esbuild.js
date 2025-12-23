@@ -29,7 +29,7 @@ const extensionConfig = {
   plugins: [
     copy({
       assets: [
-        { from: 'node_modules/sql.js/dist/sql-wasm.wasm', to: './out' }
+        { from: 'node_modules/sql.js/dist/sql-wasm.wasm', to: './' }
       ]
     })
   ]

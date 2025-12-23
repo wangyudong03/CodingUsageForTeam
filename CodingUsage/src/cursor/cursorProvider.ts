@@ -378,9 +378,9 @@ export class CursorProvider implements IUsageProvider {
 
         for (const event of aggregatedData.aggregations) {
             if (event.modelIntent === 'default') {
-                autoUsageCents += event.totalCents;
+                autoUsageCents += event.totalCents || 0;
             } else {
-                apiUsageCents += event.totalCents;
+                apiUsageCents += event.totalCents || 0;
             }
         }
 
@@ -487,7 +487,7 @@ export class CursorProvider implements IUsageProvider {
                 const outputTokens = parseInt(agg.outputTokens || '0');
                 const cacheWriteTokens = parseInt(agg.cacheWriteTokens || '0');
                 const cacheReadTokens = parseInt(agg.cacheReadTokens || '0');
-                const costDollars = agg.totalCents / 100;
+                const costDollars = (agg.totalCents || 0) / 100;
 
                 rows.push([
                     modelName,
@@ -547,9 +547,9 @@ export class CursorProvider implements IUsageProvider {
                 if (accAggregated && accAggregated.aggregations) {
                     for (const event of accAggregated.aggregations) {
                         if (event.modelIntent === 'default') {
-                            autoUsedCents += event.totalCents;
+                            autoUsedCents += event.totalCents || 0;
                         } else {
-                            apiUsedCents += event.totalCents;
+                            apiUsedCents += event.totalCents || 0;
                         }
                     }
                 }
