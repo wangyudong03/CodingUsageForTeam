@@ -134,8 +134,12 @@ export class ClipboardMonitor {
 
     async checkForToken(): Promise<void> {
         try {
-            const clipboardText = await vscode.env.clipboard.readText();
             const tokenPattern = getClipboardTokenPattern();
+            // 如果当前IDE不需要检测剪贴板token，直接返回
+            if (!tokenPattern) {
+                return;
+            }
+            const clipboardText = await vscode.env.clipboard.readText();
             const tokenMatch = clipboardText.match(tokenPattern);
             if (tokenMatch?.[1]) {
                 await this.handleTokenDetected(tokenMatch[1]);

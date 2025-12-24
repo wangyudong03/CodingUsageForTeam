@@ -140,6 +140,11 @@ export function isReportingEnabled(): boolean {
     return getConfig().get<boolean>('enableReporting') || false;
 }
 
+// 检查是否显示所有提供者
+export function isShowAllProvidersEnabled(): boolean {
+    return getConfig().get<boolean>('showAllProviders') || false;
+}
+
 // ==================== 输出通道管理 ====================
 let outputChannel: vscode.OutputChannel;
 
@@ -220,15 +225,19 @@ export function isRetryableError(error: any): boolean {
 
 // ==================== 剪贴板匹配模式 ====================
 // 获取剪贴板检测的正则表达式
-export function getClipboardTokenPattern(): RegExp {
+// 只在匹配到对应IDE的token格式时才提示添加
+// Cursor: WorkosCursorSessionToken=xxx
+// Trae: X-Cloudide-Session=xxx
+// Antigravity/Unknown: 不检测（返回null）
+export function getClipboardTokenPattern(): RegExp | null {
     const appType = getAppType();
     if (appType === 'cursor') {
         return /WorkosCursorSessionToken=([^\n\s;]+)/;
     } else if (appType === 'trae') {
         return /X-Cloudide-Session=([^\s;]+)/;
     }
-    // 支持两种格式
-    return /(?:WorkosCursorSessionToken|X-Cloudide-Session)=([^\n\s;]+)/;
+    // antigravity 和 unknown 不检测剪贴板token
+    return null;
 }
 
 // ==================== 数据库监控字段 ====================

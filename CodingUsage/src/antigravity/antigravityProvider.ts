@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { IUsageProvider } from '../common/types';
-import { logWithTime, getOutputChannel } from '../common/utils';
+import { logWithTime, getOutputChannel, isShowAllProvidersEnabled } from '../common/utils';
 import { DOUBLE_CLICK_DELAY, FETCH_TIMEOUT } from '../common/constants';
 import { QuotaSnapshot, ModelQuotaInfo } from './types';
 import { PortDetector } from './portDetector';
@@ -16,10 +16,7 @@ export class AntigravityProvider implements IUsageProvider {
     private clickTimer: NodeJS.Timeout | null = null;
     private fetchTimeoutTimer: NodeJS.Timeout | null = null;
     private pollingTimer: NodeJS.Timeout | null = null;
-    private rotationTimer: NodeJS.Timeout | null = null;
-    private currentDisplayIndex = 0;
     private readonly POLLING_INTERVAL = 100 * 1000; // 100秒
-    private readonly ROTATION_INTERVAL = 5 * 1000; // 5秒轮换
     private isRefreshing = false;
     private isManualRefresh = false;
 
@@ -30,7 +27,7 @@ export class AntigravityProvider implements IUsageProvider {
 
     private createStatusBarItem(): vscode.StatusBarItem {
         const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 90);
-        item.command = 'cursorUsage.handleStatusBarClick';
+        item.command = 'cursorUsage.handleAntigravityClick';
         item.show();
         return item;
     }
@@ -39,7 +36,6 @@ export class AntigravityProvider implements IUsageProvider {
         this.updateStatusBar();
         this.fetchData();
         this.startPolling();
-        this.startRotation();
     }
 
     private startPolling(): void {
@@ -56,21 +52,6 @@ export class AntigravityProvider implements IUsageProvider {
         if (this.pollingTimer) {
             clearInterval(this.pollingTimer);
             this.pollingTimer = null;
-        }
-    }
-
-    private startRotation(): void {
-        this.stopRotation();
-        this.rotationTimer = setInterval(() => {
-            this.currentDisplayIndex++;
-            this.updateStatusBar();
-        }, this.ROTATION_INTERVAL);
-    }
-
-    private stopRotation(): void {
-        if (this.rotationTimer) {
-            clearInterval(this.rotationTimer);
-            this.rotationTimer = null;
         }
     }
 
@@ -91,6 +72,10 @@ export class AntigravityProvider implements IUsageProvider {
 
     public isInRefreshingState(): boolean {
         return this.isRefreshing;
+    }
+
+    public isAuthenticated(): boolean {
+        return this.quotaData !== null;
     }
 
     public handleStatusBarClick(): void {
@@ -119,7 +104,6 @@ export class AntigravityProvider implements IUsageProvider {
 
     public dispose(): void {
         this.stopPolling();
-        this.stopRotation();
         this.statusBarItem.dispose();
     }
 
@@ -163,7 +147,14 @@ export class AntigravityProvider implements IUsageProvider {
     }
 
     private updateStatusBar(): void {
+        const showAll = isShowAllProvidersEnabled();
         if (!this.quotaData) {
+            if (showAll) {
+                // In Show All mode, hide unauthenticated/unavailable providers
+                this.statusBarItem.hide();
+                return;
+            }
+            this.statusBarItem.show();
             this.statusBarItem.text = '$(warning) Antigravity: Off';
             this.statusBarItem.tooltip = 'Unable to detect Antigravity process\nClick to refresh';
             return;
@@ -179,24 +170,30 @@ export class AntigravityProvider implements IUsageProvider {
         if (gPro) displayItems.push({ name: 'Gemini Pro', model: gPro });
         if (gFlash) displayItems.push({ name: 'Gemini Flash', model: gFlash });
 
-        // Filter out models at 100% - they don't need to be in rotation
+        // Filter out models at 0% usage (100% remaining) - they don't need to be in rotation
         const rotationItems = displayItems.filter(item =>
-            item.model.remainingPercentage === undefined || item.model.remainingPercentage < 100
+            item.model.remainingPercentage !== undefined && item.model.remainingPercentage < 100
         );
 
         if (rotationItems.length === 0) {
-            this.statusBarItem.text = 'Antigravity: OK';
+            this.statusBarItem.text = 'Antigravity: 0%';
         } else {
-            // Rotate through models under 100%
-            const index = this.currentDisplayIndex % rotationItems.length;
-            const current = rotationItems[index];
-            this.statusBarItem.text = `${current.name}: ${this.formatRemaining(current.model)} (${current.model.timeUntilResetFormatted})`;
+            // Sort by timeUntilReset ascending (closest to reset first)
+            rotationItems.sort((a, b) => a.model.timeUntilReset - b.model.timeUntilReset);
+            const current = rotationItems[0];
+            if (showAll) {
+                this.statusBarItem.text = `Antigravity: ${this.formatUsage(current.model)}`;
+            } else {
+                this.statusBarItem.text = `Antigravity: ${this.formatUsage(current.model)} (${current.model.timeUntilResetFormatted})`;
+            }
         }
         this.statusBarItem.tooltip = this.buildTooltip();
+        this.statusBarItem.show();
     }
 
-    private formatRemaining(model: ModelQuotaInfo): string {
-        return model.remainingPercentage !== undefined ? `${model.remainingPercentage.toFixed(0)}%` : '??%';
+    private formatUsage(model: ModelQuotaInfo): string {
+        const usage = model.remainingPercentage !== undefined ? 100 - model.remainingPercentage : 0;
+        return model.remainingPercentage !== undefined ? `${Math.round(usage)}%` : '??%';
     }
 
     private buildTooltip(): vscode.MarkdownString {
@@ -211,11 +208,19 @@ export class AntigravityProvider implements IUsageProvider {
 
         md.appendMarkdown(`**Antigravity Usage** \u00A0\u00A0 🕐${this.formatTime(this.quotaData.timestamp)}\n\n`);
 
+        // Create a Markdown table for better alignment
+        const header = '| Model | Usage | Reset |';
+        const separator = '| :--- | :--- | :--- |';
+
+        let tableRows = '';
         this.quotaData.models.forEach(model => {
-            const progress = this.buildProgressBar(model.remainingPercentage || 0);
+            const usage = model.remainingPercentage !== undefined ? 100 - model.remainingPercentage : 0;
+            const progress = this.buildProgressBar(usage);
             const shortLabel = this.shortenModelLabel(model.label);
-            md.appendMarkdown(`${shortLabel} [${progress.bar}] ${progress.percentage}% \u00A0 Reset: ${model.timeUntilResetFormatted}\n\n`);
+            tableRows += `| ${shortLabel} | ${progress.bar} ${progress.percentage}% | ${model.timeUntilResetFormatted} |\n`;
         });
+
+        md.appendMarkdown(`${header}\n${separator}\n${tableRows}\n`);
 
         md.appendMarkdown('---\n\n[Refresh](command:cursorUsage.refresh) \u00A0\u00A0 [Settings](command:cursorUsage.updateSession)');
         return md;
@@ -227,9 +232,9 @@ export class AntigravityProvider implements IUsageProvider {
             'Claude Sonnet 4.5': 'Sonnet 4.5',
             'Claude Sonnet 4.5 (Thinking)': 'Sonnet 4.5T',
             'Claude Opus 4.5 (Thinking)': 'Opus 4.5T',
-            'Gemini 3 Flash': 'G3 Flash',
-            'Gemini 3 Pro (High)': 'G3 Pro-H',
-            'Gemini 3 Pro (Low)': 'G3 Pro-L',
+            'Gemini 3 Flash': 'Gemini 3F',
+            'Gemini 3 Pro (High)': 'Gemini 3P-H',
+            'Gemini 3 Pro (Low)': 'Gemini 3P-L',
             'GPT-OSS 120B (Medium)': 'GPT-OSS',
         };
         return mappings[label] || label;

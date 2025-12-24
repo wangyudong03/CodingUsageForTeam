@@ -4,6 +4,7 @@ import {
     getAdditionalSessionTokens,
     formatTimeWithoutYear,
     getAppType,
+    isShowAllProvidersEnabled,
 } from '../common/utils';
 import {
     APP_NAME,
@@ -44,7 +45,7 @@ export class TraeProvider implements IUsageProvider {
 
     private createStatusBarItem(): vscode.StatusBarItem {
         const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-        item.command = 'cursorUsage.handleStatusBarClick';
+        item.command = 'cursorUsage.handleTraeClick';
         item.show();
         return item;
     }
@@ -75,6 +76,10 @@ export class TraeProvider implements IUsageProvider {
 
     public isInRefreshingState(): boolean {
         return this.isRefreshing;
+    }
+
+    public isAuthenticated(): boolean {
+        return !this.isAuthFailed && this.traeUsageData !== null && this.traeUsageData.code !== 1001;
     }
 
     public handleStatusBarClick(): void {
@@ -341,18 +346,36 @@ export class TraeProvider implements IUsageProvider {
     }
 
     private showAuthFailedStatus(): void {
+        const showAll = isShowAllProvidersEnabled();
+        if (showAll) {
+            this.statusBarItem.hide();
+            return;
+        }
+        this.statusBarItem.show();
         this.statusBarItem.text = `⚠️ ${APP_NAME}: Auth Failed`;
         this.statusBarItem.color = '#ff6b6b';
         this.statusBarItem.tooltip = 'Authentication failed: Session may be invalid or expired\nClick to reconfigure\n\nSingle click: Refresh\nDouble click: Configure';
     }
 
     private showNoActiveSubscriptionStatus(): void {
+        const showAll = isShowAllProvidersEnabled();
+        if (showAll) {
+            this.statusBarItem.hide();
+            return;
+        }
+        this.statusBarItem.show();
         this.statusBarItem.text = `$(info) ${APP_NAME}: No Active Subscription`;
         this.statusBarItem.color = undefined;
         this.statusBarItem.tooltip = 'No active subscription pack found\n\nSingle click: Refresh\nDouble click: Configure';
     }
 
     private showNotConfiguredStatus(): void {
+        const showAll = isShowAllProvidersEnabled();
+        if (showAll) {
+            this.statusBarItem.hide();
+            return;
+        }
+        this.statusBarItem.show();
         this.statusBarItem.text = `$(warning) Trae: Not Configured`;
         this.statusBarItem.color = undefined;
         this.statusBarItem.tooltip = 'Click to configure session token\n\nSingle click: Refresh\nDouble click: Configure';
@@ -362,10 +385,17 @@ export class TraeProvider implements IUsageProvider {
         const { totalUsage, totalLimit } = stats;
         const remaining = totalLimit - totalUsage;
         const remainingFormatted = remaining.toFixed(1);
+        const percentage = totalLimit > 0 ? (totalUsage / totalLimit) * 100 : 0;
+        const showAll = isShowAllProvidersEnabled();
 
-        this.statusBarItem.text = `⚡ Fast: ${totalUsage}/${totalLimit} (${remainingFormatted} Left)`;
+        if (showAll) {
+            this.statusBarItem.text = `Trae: ${Math.round(percentage)}%`;
+        } else {
+            this.statusBarItem.text = `⚡ Fast: ${totalUsage}/${totalLimit} (${remainingFormatted} Left)`;
+        }
         this.statusBarItem.color = undefined;
         this.statusBarItem.tooltip = this.buildTraeDetailedTooltip();
+        this.statusBarItem.show();
     }
 
     private calculateTraeUsageStats(): TraeUsageStats {
@@ -487,7 +517,15 @@ export class TraeProvider implements IUsageProvider {
         const min = now.getMinutes().toString().padStart(2, '0');
         const updateTimeStr = `🕐${mm}/${dd} ${hh}:${min}`;
 
-        validPacks.forEach((pack, index) => {
+        // Header line with time
+        sections.push(`**Trae Usage** \u00A0\u00A0 ${hintText}${updateTimeStr}`);
+
+        // Build table header
+        const header = '| Plan | Usage | Resets |';
+        const separator = '| :--- | :--- | :--- |';
+
+        let tableRows = '';
+        validPacks.forEach((pack) => {
             const { usage, entitlement_base_info } = pack;
             const { quota } = entitlement_base_info;
 
@@ -495,31 +533,19 @@ export class TraeProvider implements IUsageProvider {
             const fastUsed = usage.premium_model_fast_amount;
             const fastLimit = quota.premium_model_fast_request_limit;
 
-            // 格式化时间范围
-            const startTime = formatTimeWithoutYear(entitlement_base_info.start_time, true);
+            // 格式化结束时间作为 Resets
             const endTime = formatTimeWithoutYear(entitlement_base_info.end_time, true);
-            const dateRange = `📅${startTime}-${endTime}`;
 
             if (fastLimit > 0) {
                 const progressInfo = TraeProvider.buildProgressBar(fastUsed, fastLimit);
-
-                // 第一行：订阅类型 + 时间范围 + (仅第一项) 更新时间
-                let header = `**${subscriptionType}** \u00A0\u00A0 ${dateRange}`;
-
-                // 如果是第一个包，在头部追加更新时间
-                if (index === 0) {
-                    header += `\u00A0\u00A0${hintText}${updateTimeStr}`;
-                }
-
-                // 第二行：Fast (使用量/总量) + 进度条 + 百分比
-                const usageFormatted = `${fastUsed.toFixed(0)}/${fastLimit}`;
-                const percentageFormatted = `${progressInfo.percentage}%`;
-                const usageLine = `Fast (${usageFormatted}) \u00A0\u00A0\u00A0[${progressInfo.progressBar}] ${percentageFormatted}`;
-
-                // 将 Header 和 Usage 组合成一个块，中间用 \n\n 分隔以确保换行
-                sections.push(header + '\n\n' + usageLine);
+                const planLabel = `${subscriptionType}(${fastUsed.toFixed(0)}/${fastLimit})`;
+                tableRows += `| ${planLabel} | ${progressInfo.progressBar} ${progressInfo.percentage}% | ${endTime} |\n`;
             }
         });
+
+        if (tableRows) {
+            sections.push(`${header}\n${separator}\n${tableRows}`);
+        }
 
         return sections;
     }
@@ -552,7 +578,7 @@ export class TraeProvider implements IUsageProvider {
 
     public static buildProgressBar(used: number, limit: number): { progressBar: string; percentage: number } {
         const percentage = limit > 0 ? Math.round((used / limit) * 100) : 0;
-        const progressBarLength = 30;
+        const progressBarLength = 20;  // Match Antigravity's progress bar width
         const filledLength = limit > 0 ? Math.round((used / limit) * progressBarLength) : 0;
         const clampedFilled = Math.max(0, Math.min(filledLength, progressBarLength));
         const progressBar = '█'.repeat(clampedFilled) + '░'.repeat(progressBarLength - clampedFilled);
@@ -571,3 +597,5 @@ export class TraeProvider implements IUsageProvider {
         return `${left}${' '.repeat(spaceCount)}${updateTime}`;
     }
 }
+
+

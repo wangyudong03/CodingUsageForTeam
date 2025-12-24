@@ -8,7 +8,10 @@ export interface IUsageProvider {
     dispose(): void;
     isInRefreshingState(): boolean;
     safeRefresh(): void;
+    isAuthenticated(): boolean;
 }
+
+
 
 
 

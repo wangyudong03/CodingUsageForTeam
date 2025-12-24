@@ -6,7 +6,7 @@ import {
   getClientApiKey,
   getTeamServerUrl,
   getConfig,
-  isReportingEnabled
+  isShowAllProvidersEnabled
 } from './common/utils';
 import { APP_NAME } from './common/constants';
 import { IUsageProvider } from './common/types';
@@ -21,15 +21,33 @@ export async function activate(context: vscode.ExtensionContext) {
   logWithTime(`${APP_NAME} Usage Monitor extension is now activated. AppType: ${appType}`);
 
   const providers: IUsageProvider[] = [];
-  if (appType === 'cursor') {
-    providers.push(new CursorProvider(context));
-  } else if (appType === 'trae') {
-    providers.push(new TraeProvider(context));
-  } else if (appType === 'antigravity') {
-    providers.push(new AntigravityProvider(context));
+  const showAll = isShowAllProvidersEnabled();
+
+  // 创建各个 Provider 实例（用于独立命令注册）
+  let cursorProvider: CursorProvider | null = null;
+  let traeProvider: TraeProvider | null = null;
+  let antigravityProvider: AntigravityProvider | null = null;
+
+  if (showAll) {
+    cursorProvider = new CursorProvider(context);
+    traeProvider = new TraeProvider(context);
+    antigravityProvider = new AntigravityProvider(context);
+    providers.push(cursorProvider, traeProvider, antigravityProvider);
   } else {
-    logWithTime('Unknown App Type, defaulting to Cursor logic');
-    providers.push(new CursorProvider(context));
+    if (appType === 'cursor') {
+      cursorProvider = new CursorProvider(context);
+      providers.push(cursorProvider);
+    } else if (appType === 'trae') {
+      traeProvider = new TraeProvider(context);
+      providers.push(traeProvider);
+    } else if (appType === 'antigravity') {
+      antigravityProvider = new AntigravityProvider(context);
+      providers.push(antigravityProvider);
+    } else {
+      logWithTime('Unknown App Type, defaulting to Cursor logic');
+      cursorProvider = new CursorProvider(context);
+      providers.push(cursorProvider);
+    }
   }
 
   const clipboardMonitor = new ClipboardMonitor();
@@ -45,7 +63,7 @@ export async function activate(context: vscode.ExtensionContext) {
   pingManager.start();
   TeamServerClient.ping(true);
 
-  registerCommands(context, providers);
+  registerCommands(context, providers, cursorProvider, traeProvider, antigravityProvider);
   registerListeners(context, providers, clipboardMonitor);
 
   context.subscriptions.push({
@@ -57,11 +75,25 @@ export async function activate(context: vscode.ExtensionContext) {
   });
 }
 
-function registerCommands(context: vscode.ExtensionContext, providers: IUsageProvider[]): void {
+function registerCommands(
+  context: vscode.ExtensionContext,
+  providers: IUsageProvider[],
+  cursorProvider: CursorProvider | null,
+  traeProvider: TraeProvider | null,
+  antigravityProvider: AntigravityProvider | null
+): void {
   const commands = [
-    vscode.commands.registerCommand('cursorUsage.handleStatusBarClick', () => {
-      providers.forEach(p => p.handleStatusBarClick());
+    // 为每个 Provider 注册独立的点击命令
+    vscode.commands.registerCommand('cursorUsage.handleCursorClick', () => {
+      cursorProvider?.handleStatusBarClick();
     }),
+    vscode.commands.registerCommand('cursorUsage.handleTraeClick', () => {
+      traeProvider?.handleStatusBarClick();
+    }),
+    vscode.commands.registerCommand('cursorUsage.handleAntigravityClick', () => {
+      antigravityProvider?.handleStatusBarClick();
+    }),
+    // 保留通用的刷新命令（用于刷新全部）
     vscode.commands.registerCommand('cursorUsage.refresh', () => {
       providers.forEach(p => p.refresh());
     }),
@@ -111,24 +143,18 @@ async function showUpdateSessionDialog(context: vscode.ExtensionContext): Promis
   const dashboardUrl = getDashboardUrl();
   const clientApiKey = getClientApiKey();
   const teamServerUrl = getTeamServerUrl();
-  const reportingEnabled = isReportingEnabled();
+  const showAllProviders = isShowAllProvidersEnabled();
 
   interface QuickPickItemExtended extends vscode.QuickPickItem {
     action: string;
   }
 
-  // 构建团队上报开关的详情（使用低调的符号）
-  const reportingStatus = reportingEnabled ? '● ON' : '○ OFF';
-  const serverInfo = teamServerUrl ? teamServerUrl : 'Not configured';
-  const apiKeyInfo = clientApiKey ? `${clientApiKey.substring(0, 11)}...` : 'Not generated';
-  const reportingDetail = `Status: ${reportingStatus} | Server: ${serverInfo} | Key: ${apiKeyInfo}`;
-
   const items: QuickPickItemExtended[] = [
     {
-      label: reportingEnabled ? '$(check) Team Reporting: ON' : '$(circle-slash) Team Reporting: OFF',
-      description: reportingEnabled ? 'Click to disable' : 'Click to enable',
-      detail: reportingDetail,
-      action: 'toggleReporting'
+      label: showAllProviders ? '$(check) Show All Providers: ON' : '$(circle-slash) Show All Providers: OFF',
+      description: showAllProviders ? 'Click to show only current IDE' : 'Click to show usage for all IDEs',
+      detail: 'View usage for Cursor, Trae, and Antigravity regardless of context',
+      action: 'toggleShowAll'
     },
     {
       label: '$(link-external) Copy API Key & Open Team Server',
@@ -162,13 +188,17 @@ async function showUpdateSessionDialog(context: vscode.ExtensionContext): Promis
       case 'visitDashboard':
         vscode.env.openExternal(vscode.Uri.parse(dashboardUrl));
         break;
-      case 'toggleReporting':
-        // 切换上报开关
-        const newReportingState = !reportingEnabled;
-        const configObj = getConfig();
-        await configObj.update('enableReporting', newReportingState, vscode.ConfigurationTarget.Global);
-        const statusText = newReportingState ? 'enabled' : 'disabled';
-        vscode.window.showInformationMessage(`Team reporting ${statusText}!`);
+
+      case 'toggleShowAll':
+        // 切换显示所有提供者
+        const newShowAllState = !showAllProviders;
+        const config = getConfig();
+        await config.update('showAllProviders', newShowAllState, vscode.ConfigurationTarget.Global);
+        const action = newShowAllState ? 'enabled' : 'disabled';
+        const msg = await vscode.window.showInformationMessage(`Show All Providers ${action}! Please reload to apply changes.`, 'Reload');
+        if (msg === 'Reload') {
+          vscode.commands.executeCommand('workbench.action.reloadWindow');
+        }
         break;
       case 'copyKeyAndOpenServer':
         // 复制 API Key 并跳转到 team server

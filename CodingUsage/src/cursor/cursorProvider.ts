@@ -7,6 +7,7 @@ import {
     logWithTime,
     formatTimeWithoutYear,
     getAdditionalSessionTokens,
+    isShowAllProvidersEnabled,
 } from '../common/utils';
 import {
     DOUBLE_CLICK_DELAY,
@@ -140,7 +141,7 @@ export class CursorProvider implements IUsageProvider {
 
     private createStatusBarItem(): vscode.StatusBarItem {
         const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-        item.command = 'cursorUsage.handleStatusBarClick';
+        item.command = 'cursorUsage.handleCursorClick';
         item.show();
         return item;
     }
@@ -169,6 +170,10 @@ export class CursorProvider implements IUsageProvider {
 
     public isInRefreshingState(): boolean {
         return this.isRefreshing;
+    }
+
+    public isAuthenticated(): boolean {
+        return this.summaryData !== null;
     }
 
     public handleStatusBarClick(): void {
@@ -332,6 +337,13 @@ export class CursorProvider implements IUsageProvider {
     }
 
     private showNotConfiguredStatus(): void {
+        const showAll = isShowAllProvidersEnabled();
+        if (showAll) {
+            // In Show All mode, hide unauthenticated providers
+            this.statusBarItem.hide();
+            return;
+        }
+        this.statusBarItem.show();
         this.statusBarItem.text = `$(warning) Cursor: Not Logged In`;
         this.statusBarItem.color = undefined;
         this.statusBarItem.tooltip = 'Click to configure\n\nSingle click: Refresh\nDouble click: Configure';
@@ -342,6 +354,7 @@ export class CursorProvider implements IUsageProvider {
 
         const membershipType = this.summaryData.membershipType.toUpperCase();
         const plan = this.summaryData.individualUsage.plan;
+        const showAll = isShowAllProvidersEnabled();
 
         const apiPercentUsed = plan.apiPercentUsed ?? 0;
         const totalPercentUsed = plan.totalPercentUsed ?? 0;
@@ -352,16 +365,25 @@ export class CursorProvider implements IUsageProvider {
         if (apiPercentUsed > 0 || (plan.autoPercentUsed ?? 0) > 0) {
             const apiUsageDollars = apiUsageCents / 100;
             const apiLimitDollars = apiLimitCents / 100;
-            this.statusBarItem.text = `⚡ ${membershipType}: $${apiUsageDollars.toFixed(2)}/${apiLimitDollars.toFixed(0)} (${apiPercentUsed.toFixed(1)}%)`;
+            if (showAll) {
+                this.statusBarItem.text = `Cursor: ${Math.round(apiPercentUsed)}%`;
+            } else {
+                this.statusBarItem.text = `⚡ ${membershipType}: $${apiUsageDollars.toFixed(2)}/${apiLimitDollars.toFixed(0)} (${apiPercentUsed.toFixed(1)}%)`;
+            }
         } else {
             const usedCents = plan.breakdown?.total ?? plan.used;
             const usedDollars = usedCents / 100;
             const limitDollars = plan.limit / 100;
-            this.statusBarItem.text = `⚡ ${membershipType}: $${usedDollars.toFixed(2)}/${limitDollars.toFixed(0)} (${totalPercentUsed.toFixed(1)}%)`;
+            if (showAll) {
+                this.statusBarItem.text = `Cursor: ${Math.round(totalPercentUsed)}%`;
+            } else {
+                this.statusBarItem.text = `⚡ ${membershipType}: $${usedDollars.toFixed(2)}/${limitDollars.toFixed(0)} (${totalPercentUsed.toFixed(1)}%)`;
+            }
         }
 
         this.statusBarItem.color = undefined;
         this.statusBarItem.tooltip = this.buildCursorDetailedTooltip();
+        this.statusBarItem.show();
     }
 
     private calculateUsageFromAggregated() {
@@ -693,6 +715,8 @@ export class CursorProvider implements IUsageProvider {
         return result.join('\n');
     }
 }
+
+
 
 
 

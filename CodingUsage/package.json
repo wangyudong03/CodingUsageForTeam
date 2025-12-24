@@ -71,6 +71,11 @@
           "type": "boolean",
           "default": false,
           "description": "Enable reporting usage data to team server (default: disabled)"
+        },
+        "cursorUsage.showAllProviders": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show usage for all supported IDEs (Cursor, Trae, Antigravity) regardless of the current IDE."
         }
       }
     }
