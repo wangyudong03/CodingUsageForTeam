@@ -8,17 +8,19 @@ import { DatabaseReader } from './databaseReader';
 export class AntigravityProvider implements IUsageProvider {
     private quotaData: QuotaSnapshot | null = null;
     private statusBarItem: vscode.StatusBarItem;
-    private databaseReader = new DatabaseReader();
+    private databaseReader: DatabaseReader;
 
     private clickCount = 0;
     private clickTimer: NodeJS.Timeout | null = null;
     private fetchTimeoutTimer: NodeJS.Timeout | null = null;
     private pollingTimer: NodeJS.Timeout | null = null;
-    private readonly POLLING_INTERVAL = 10 * 1000; // 10秒，与DbMonitor一致
+    private readonly POLLING_INTERVAL = 10 * 1000; // 10秒,与DbMonitor一致
     private isRefreshing = false;
     private isManualRefresh = false;
 
     constructor(private context: vscode.ExtensionContext) {
+        const wasmPath = vscode.Uri.joinPath(context.extensionUri, 'out', 'sql-wasm.wasm').fsPath;
+        this.databaseReader = new DatabaseReader(wasmPath);
         this.statusBarItem = this.createStatusBarItem();
         this.initialize();
     }
@@ -132,12 +134,25 @@ export class AntigravityProvider implements IUsageProvider {
                     this.quotaData = snapshot;
                 } else {
                     logWithTime('[Antigravity] 本地数据库解析失败或无模型数据');
+                    if (snapshot) {
+                        logWithTime(`[Antigravity]   - snapshot存在但模型数量为: ${snapshot.models.length}`);
+                    } else {
+                        logWithTime('[Antigravity]   - snapshot为null');
+                    }
                 }
             } else {
                 logWithTime('[Antigravity] 本地数据库中无认证信息');
+                if (authStatus) {
+                    logWithTime(`[Antigravity]   - authStatus存在但userStatusProtoBinaryBase64为: ${authStatus.userStatusProtoBinaryBase64 ? '存在但为空' : 'undefined/null'}`);
+                } else {
+                    logWithTime('[Antigravity]   - authStatus为null,可能是数据库读取失败');
+                }
             }
         } catch (error) {
             logWithTime(`[Antigravity] fetchData 错误: ${error}`);
+            if (error instanceof Error) {
+                logWithTime(`[Antigravity] 错误详情: ${error.message}`);
+            }
         } finally {
             this.resetRefreshState();
             this.updateStatusBar();

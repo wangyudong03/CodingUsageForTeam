@@ -94,11 +94,36 @@ export class DbMonitor {
             if (!dbPath) {
                 return;
             }
-            const content = await this.queryMonitoredContent(dbPath);
-            if (!content) {
+
+            // Monitor both main DB and WAL file for changes
+            // SQLite uses Write-Ahead Logging (WAL) mode where changes are written to
+            // state.vscdb-wal first, and only merged into state.vscdb during checkpoints.
+            // By monitoring the WAL file's modification time, we can detect changes immediately.
+            const walPath = dbPath + '-wal';
+            const mainDbExists = await fs.pathExists(dbPath);
+            const walExists = await fs.pathExists(walPath);
+
+            if (!mainDbExists) {
                 return;
             }
-            const contentHash = crypto.createHash('md5').update(content, 'utf8').digest('hex');
+
+            // Create combined hash from both database content and WAL modification time
+            let combinedContent = '';
+
+            // Read main DB content
+            const content = await this.queryMonitoredContent(dbPath);
+            if (content) {
+                combinedContent += content;
+            }
+
+            // If WAL exists, include its modification time in hash
+            // This ensures we detect changes immediately when WAL is updated
+            if (walExists) {
+                const walStats = await fs.stat(walPath);
+                combinedContent += `|wal:${walStats.mtimeMs}`;
+            }
+
+            const contentHash = crypto.createHash('md5').update(combinedContent, 'utf8').digest('hex');
             if (this.lastContentHash !== contentHash) {
                 logWithTime(`[DbMonitor] 内容变化: ${this.lastContentHash?.slice(0, 8) ?? 'null'} -> ${contentHash.slice(0, 8)}, DB: ${dbPath}`);
                 this.lastContentHash = contentHash;

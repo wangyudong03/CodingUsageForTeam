@@ -1,10 +1,9 @@
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import * as os from 'os';
 import * as path from 'path';
+import * as fs from 'fs-extra';
+import initSqlJs from 'sql.js';
 import { QuotaSnapshot, ModelQuotaInfo } from './types';
-
-const execAsync = promisify(exec);
+import { logWithTime } from '../common/utils';
 
 export interface AntigravityAuthStatus {
     name: string;
@@ -15,23 +14,42 @@ export interface AntigravityAuthStatus {
 
 export class DatabaseReader {
     private readonly dbPath: string;
+    private readonly wasmPath: string;
 
-    constructor() {
+    constructor(wasmPath: string) {
         // Antigravity stores data in %APPDATA%/Antigravity on Windows
         const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
         this.dbPath = path.join(appData, 'Antigravity', 'User', 'globalStorage', 'state.vscdb');
+        this.wasmPath = wasmPath;
     }
 
     async readAuthStatus(): Promise<AntigravityAuthStatus | null> {
         try {
-            const command = `sqlite3 "${this.dbPath}" "SELECT value FROM ItemTable WHERE key = 'antigravityAuthStatus'"`;
-            const { stdout } = await execAsync(command, { timeout: 5000 });
-
-            if (!stdout.trim()) {
+            // 检查数据库文件是否存在
+            if (!await fs.pathExists(this.dbPath)) {
+                logWithTime('[DatabaseReader] 数据库文件不存在!');
                 return null;
             }
 
-            const data = JSON.parse(stdout.trim());
+            const SQL = await initSqlJs({ locateFile: () => this.wasmPath });
+            const fileBuffer = await fs.readFile(this.dbPath);
+            const db = new SQL.Database(fileBuffer);
+
+            const res = db.exec(`SELECT value FROM ItemTable WHERE key = 'antigravityAuthStatus';`);
+            db.close();
+
+            if (!res || res.length === 0 || !res[0].values || res[0].values.length === 0) {
+                logWithTime('[DatabaseReader] 查询结果为空,数据库中没有 antigravityAuthStatus 键');
+                return null;
+            }
+
+            const val = res[0].values[0][0];
+            if (typeof val !== 'string') {
+                logWithTime(`[DatabaseReader] 查询结果类型错误: ${typeof val}`);
+                return null;
+            }
+
+            const data = JSON.parse(val);
             return {
                 name: data.name,
                 email: data.email,
@@ -39,7 +57,11 @@ export class DatabaseReader {
                 userStatusProtoBinaryBase64: data.userStatusProtoBinaryBase64
             };
         } catch (error) {
-            console.error('[DatabaseReader] Error reading auth status:', error);
+            logWithTime(`[DatabaseReader] 读取认证状态错误: ${error}`);
+            if (error instanceof Error) {
+                logWithTime(`[DatabaseReader] 错误消息: ${error.message}`);
+                logWithTime(`[DatabaseReader] 错误堆栈: ${error.stack}`);
+            }
             return null;
         }
     }
@@ -47,7 +69,7 @@ export class DatabaseReader {
     parseUserStatusProto(base64Data: string): QuotaSnapshot | null {
         try {
             const buffer = Buffer.from(base64Data, 'base64');
-            
+
             // Extract readable strings and parse model quota info
             // The proto format contains model configs with quota information
             const models = this.extractModelQuotas(buffer);
@@ -82,7 +104,7 @@ export class DatabaseReader {
         // For now, create placeholder entries for detected models
         // We'll need to refine the proto parsing to extract actual quota values
         const detectedModels = new Set<string>();
-        
+
         for (const { pattern, label } of modelPatterns) {
             if (pattern.test(str)) {
                 detectedModels.add(label);
@@ -99,17 +121,17 @@ export class DatabaseReader {
                 label,
                 modelId: label.toLowerCase().replace(/[^a-z0-9]/g, '-'),
                 remainingFraction: quota?.remainingFraction,
-                remainingPercentage: quota?.remainingFraction !== undefined 
-                    ? quota.remainingFraction * 100 
+                remainingPercentage: quota?.remainingFraction !== undefined
+                    ? quota.remainingFraction * 100
                     : undefined,
                 isExhausted: quota?.remainingFraction === 0,
                 resetTime: quota?.resetTime || new Date(),
-                timeUntilReset: quota?.resetTime 
-                    ? quota.resetTime.getTime() - Date.now() 
+                timeUntilReset: quota?.resetTime
+                    ? quota.resetTime.getTime() - Date.now()
                     : 0,
                 timeUntilResetFormatted: this.formatTimeUntilReset(
-                    quota?.resetTime 
-                        ? quota.resetTime.getTime() - Date.now() 
+                    quota?.resetTime
+                        ? quota.resetTime.getTime() - Date.now()
                         : 0
                 )
             });
@@ -120,13 +142,13 @@ export class DatabaseReader {
 
     private parseQuotaFields(buffer: Buffer): Map<string, { remainingFraction?: number; resetTime?: Date }> {
         const quotaMap = new Map<string, { remainingFraction?: number; resetTime?: Date }>();
-        
+
         const str = buffer.toString('binary');
-        
+
         // Known model labels in Antigravity proto format
         const modelLabels = [
             'Claude Opus 4.5 (Thinking)',
-            'Claude Sonnet 4.5 (Thinking)', 
+            'Claude Sonnet 4.5 (Thinking)',
             'Claude Sonnet 4.5',
             'Gemini 3 Pro (High)',
             'Gemini 3 Pro (Low)',
@@ -139,10 +161,10 @@ export class DatabaseReader {
             if (idx !== -1) {
                 const searchStart = idx + label.length;
                 const searchEnd = Math.min(buffer.length, searchStart + 100);
-                
+
                 let remainingFraction: number | undefined;
                 let resetTime: Date | undefined;
-                
+
                 // Search for quota float value after the model name
                 // Pattern: 0x7a 0x0d 0x0d followed by 4-byte float
                 for (let i = searchStart; i < searchEnd - 6; i++) {
@@ -159,7 +181,7 @@ export class DatabaseReader {
                         }
                     }
                 }
-                
+
                 // Search for resetTime timestamp after the model name
                 // Pattern: 0x12 0x06 0x08 followed by varint timestamp
                 for (let i = searchStart; i < searchEnd - 8; i++) {
@@ -172,7 +194,7 @@ export class DatabaseReader {
                         }
                     }
                 }
-                
+
                 if (remainingFraction !== undefined || resetTime !== undefined) {
                     quotaMap.set(label, { remainingFraction, resetTime });
                 }
@@ -186,7 +208,7 @@ export class DatabaseReader {
         let value = 0;
         let shift = 0;
         let i = offset;
-        
+
         while (i < buffer.length && shift < 35) {
             const byte = buffer[i];
             value |= (byte & 0x7f) << shift;
@@ -194,13 +216,13 @@ export class DatabaseReader {
             shift += 7;
             i++;
         }
-        
+
         return value;
     }
 
     private extractPlanName(buffer: Buffer): string | undefined {
         const str = buffer.toString('binary');
-        
+
         // Look for plan name patterns
         const planPatterns = [
             /Google AI Pro/,
